@@ -16,6 +16,8 @@
 
 package org.springframework.ai.vectorstore;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 import org.jspecify.annotations.Nullable;
@@ -33,6 +35,7 @@ import org.springframework.util.Assert;
  * @author Christian Tzolov
  * @author Thomas Vitale
  * @author Ilayaperumal Gopinathan
+ * @author Malvin Nyahwai
  */
 public class SearchRequest {
 
@@ -59,6 +62,8 @@ public class SearchRequest {
 
 	private Filter.@Nullable Expression filterExpression;
 
+	private List<String> domains = new ArrayList<>();
+
 	/**
 	 * Copy an existing {@link SearchRequest.Builder} instance.
 	 * @param originalSearchRequest {@link SearchRequest} instance to copy.
@@ -68,7 +73,8 @@ public class SearchRequest {
 		return builder().query(originalSearchRequest.getQuery())
 			.topK(originalSearchRequest.getTopK())
 			.similarityThreshold(originalSearchRequest.getSimilarityThreshold())
-			.filterExpression(originalSearchRequest.getFilterExpression());
+			.filterExpression(originalSearchRequest.getFilterExpression())
+			.withDomains(originalSearchRequest.getDomains());
 	}
 
 	public SearchRequest() {
@@ -79,6 +85,7 @@ public class SearchRequest {
 		this.topK = original.topK;
 		this.similarityThreshold = original.similarityThreshold;
 		this.filterExpression = original.filterExpression;
+		this.domains = new ArrayList<>(original.domains);
 	}
 
 	public String getQuery() {
@@ -101,10 +108,15 @@ public class SearchRequest {
 		return this.filterExpression != null;
 	}
 
+	public List<String> getDomains() {
+		return this.domains;
+	}
+
 	@Override
 	public String toString() {
 		return "SearchRequest{" + "query='" + this.query + '\'' + ", topK=" + this.topK + ", similarityThreshold="
-				+ this.similarityThreshold + ", filterExpression=" + this.filterExpression + '}';
+				+ this.similarityThreshold + ", filterExpression=" + this.filterExpression + ", domains=" + this.domains
+				+ '}';
 	}
 
 	@Override
@@ -118,12 +130,13 @@ public class SearchRequest {
 		SearchRequest that = (SearchRequest) o;
 		return this.topK == that.topK && Double.compare(that.similarityThreshold, this.similarityThreshold) == 0
 				&& Objects.equals(this.query, that.query)
-				&& Objects.equals(this.filterExpression, that.filterExpression);
+				&& Objects.equals(this.filterExpression, that.filterExpression)
+				&& Objects.equals(this.domains, that.domains);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(this.query, this.topK, this.similarityThreshold, this.filterExpression);
+		return Objects.hash(this.query, this.topK, this.similarityThreshold, this.filterExpression, this.domains);
 	}
 
 	/**
@@ -283,6 +296,66 @@ public class SearchRequest {
 		public Builder filterExpression(@Nullable String textExpression) {
 			this.searchRequest.filterExpression = (textExpression != null)
 					? new FilterExpressionTextParser().parse(textExpression) : null;
+			return this;
+		}
+
+		/**
+		 * Restrict the search to specific domains (logical namespaces).
+		 * <p>
+		 * This provides a high-level partitioning of the vector store, allowing for
+		 * optimized query execution. Documents are filtered based on a {@code "domain"}
+		 * key within their metadata
+		 * </p>
+		 * <p>
+		 *     Example of adding documents with domains
+		 * </p>
+		 * <pre>{@code
+		 * vectorStore.add(List.of(
+		 * 		new Document("Spring AI docs", Map.of("version", "1.0", "domain", "tech")),
+		 * 		new Document("History of Rome", Map.of("category", "history", "domain", "education")),
+		 * 		new Document("Adore You", Map.of("genre", "pop", "domain", "music"))
+		 * ));
+		 * }</pre>
+		 *
+		 * <p>
+		 *     Example of searching within specific domains
+		 * </p>
+		 * <pre>{@code
+		 * var request = SearchRequest.builder()
+		 * 		.query("Reading material")
+		 * 		.withDomains("tech", "education")
+		 * 		.build();
+		 * }</pre>
+		 *
+		 * <p>
+		 * This ensures that the response contains only embeddings that belong to the
+		 * specified domains. While similar to metadata filters, domains can be optimized
+		 * natively by certain vector stores (e.g., PostgreSQL GIN indexes) for better
+		 * performance.
+		 * </p>
+		 *
+		 * @param domains list of domain names to include in the search.
+		 * @return this builder.
+		 */
+		public Builder withDomains(String... domains) {
+			Assert.notNull(domains, "Domains cannot be null");
+			this.searchRequest.domains = List.of(domains);
+			return this;
+		}
+
+		/**
+		 * Overloaded method to restrict the search to specific domains using a
+		 * {@link List}.
+		 * <p>
+		 * Useful when the domain list is already available as a collection, such as when
+		 * copying an existing request.
+		 * @param domains list of domain names to include in the search.
+		 * @return this builder.
+		 * @see #withDomains(String...)
+		 */
+		public Builder withDomains(List<String> domains) {
+			Assert.notNull(domains, "Domains cannot be null");
+			this.searchRequest.domains = new ArrayList<>(domains);
 			return this;
 		}
 

@@ -48,6 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Muthukumaran Navaneethakrishnan
  * @author Thomas Vitale
  * @author Eddú Meléndez
+ * @author Malvin Nyahwai
  */
 @Testcontainers
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
@@ -97,6 +98,10 @@ public class PgVectorStoreCustomNamesIT {
 				assertThat(context).hasNotFailed();
 				assertThat(isTableExists(context, "vector_store")).isTrue();
 				assertThat(isSchemaExists(context, "public")).isTrue();
+				assertThat(isIndexExists(context, "public", "vector_store",
+						"spring_ai_vector_index")).isTrue();
+				assertThat(isIndexExists(context, "public", "vector_store",
+						"spring_ai_metadata_gin_index")).isTrue();
 				dropTableByName(context, "vector_store");
 
 			});
@@ -108,7 +113,10 @@ public class PgVectorStoreCustomNamesIT {
 		this.contextRunner.withPropertyValues("test.spring.ai.vectorstore.pgvector.vectorTableName=" + tableName)
 			.run(context -> {
 				assertThat(isTableExists(context, tableName)).isTrue();
-				assertThat(isIndexExists(context, "public", tableName, tableName + "_index")).isTrue();
+				assertThat(isIndexExists(context, "public", tableName,
+						tableName + "_index")).isTrue();
+				assertThat(isIndexExists(context, "public", tableName,
+						tableName + "_metadata_gin_index")).isTrue();
 				assertThat(isTableExists(context, "vector_store")).isFalse();
 				dropTableByName(context, tableName);
 			});

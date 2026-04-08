@@ -16,6 +16,8 @@
 
 package org.springframework.ai.vectorstore.filter;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -27,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * @author Christian Tzolov
  * @author Ilayaperumal Gopinathan
+ * @author Malvin Nyahwai
  */
 public class SearchRequestTests {
 
@@ -51,6 +54,7 @@ public class SearchRequestTests {
 			.topK(696)
 			.similarityThreshold(0.678)
 			.filterExpression("country == 'NL'")
+			.withDomains("d1", "d2")
 			.build();
 
 		var newRequest = SearchRequest.from(originalRequest).build();
@@ -60,6 +64,7 @@ public class SearchRequestTests {
 		assertThat(newRequest.getTopK()).isEqualTo(originalRequest.getTopK());
 		assertThat(newRequest.getFilterExpression()).isEqualTo(originalRequest.getFilterExpression());
 		assertThat(newRequest.getSimilarityThreshold()).isEqualTo(originalRequest.getSimilarityThreshold());
+		assertThat(newRequest.getDomains()).containsExactly("d1", "d2");
 	}
 
 	@Test
@@ -138,10 +143,25 @@ public class SearchRequestTests {
 
 	}
 
+	@Test
+	public void domains() {
+		var request = SearchRequest.builder().query("New Query").withDomains("nutrition", "activity").build();
+		assertThat(request.getDomains()).containsExactly("nutrition", "activity");
+
+		var request1 = SearchRequest.builder().query("New Query").withDomains(List.of("nutrition", "activity")).build();
+		assertThat(request1.getDomains()).containsExactly("nutrition", "activity");
+
+		var request2 = SearchRequest.from(request).withDomains("music").build();
+		assertThat(request2.getDomains()).containsExactly("music");
+		assertThat(request2.getQuery()).isEqualTo("New Query");
+
+	}
+
 	private void checkDefaults(SearchRequest request) {
 		assertThat(request.getFilterExpression()).isNull();
 		assertThat(request.getSimilarityThreshold()).isEqualTo(SearchRequest.SIMILARITY_THRESHOLD_ACCEPT_ALL);
 		assertThat(request.getTopK()).isEqualTo(SearchRequest.DEFAULT_TOP_K);
+		assertThat(request.getDomains()).isEmpty();
 	}
 
 }

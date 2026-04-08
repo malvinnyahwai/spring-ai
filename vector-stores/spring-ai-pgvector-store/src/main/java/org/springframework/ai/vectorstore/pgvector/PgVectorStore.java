@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import com.pgvector.PGvector;
 import org.postgresql.util.PGobject;
@@ -70,6 +71,7 @@ import org.springframework.util.StringUtils;
  * <li>Automatic schema initialization with configurable table and index creation</li>
  * <li>Support for different distance metrics: Cosine, Euclidean, and Inner Product</li>
  * <li>Flexible indexing options: HNSW (default), IVFFlat, or exact search (no index)</li>
+ * <li><b>High-performance partitioning using JSONB GIN indexing for domain-based filtering</b></li>
  * <li>Metadata filtering using JSON path expressions</li>
  * <li>Configurable similarity thresholds for search results</li>
  * <li>Batch processing support with configurable batch sizes</li>
@@ -85,18 +87,26 @@ import org.springframework.util.StringUtils;
  *     .indexType(PgIndexType.HNSW)
  *     .build();
  *
- * // Add documents
+ * // Add documents with metadata and domains
  * vectorStore.add(List.of(
- *     new Document("content1", Map.of("key1", "value1")),
- *     new Document("content2", Map.of("key2", "value2"))
+ *     new Document("Spring AI docs", Map.of("version", "1.0", "domain", "tech")),
+ *     new Document("History of Rome", Map.of("category", "history", "domain", "education"))
  * ));
+ *
+ * // Search using high-performance domain filtering
+ * List<Document> results = vectorStore.similaritySearch(
+ * 		SearchRequest.query("What is Spring AI?")
+ * 			.withTopK(5)
+ * 			.withSimilarityThreshold(0.7)
+ * 			.withDomains("tech")
+ * 	);
  *
  * // Search with filters
  * List<Document> results = vectorStore.similaritySearch(
- *     SearchRequest.query("search text")
+ *     SearchRequest.query("Rome")
  *         .withTopK(5)
  *         .withSimilarityThreshold(0.7)
- *         .withFilterExpression("key1 == 'value1'")
+ *         .withFilterExpression("category == 'history'")
  * );
  * }</pre>
  *
@@ -141,6 +151,7 @@ import org.springframework.util.StringUtils;
  * <li>HNSW: Default, better query performance but slower builds and more memory</li>
  * <li>IVFFLAT: Faster builds, less memory, but lower query performance</li>
  * <li>NONE: Exact search without indexing</li>
+ * <li><b>GIN: Automatically created on metadata for high-performance domain and filter queries</b></li>
  * </ul>
  *
  * @author Christian Tzolov
@@ -152,6 +163,7 @@ import org.springframework.util.StringUtils;
  * @author Jihoon Kim
  * @author YeongMin Song
  * @author Jonghoon Park
+ * @author Malvin Nyahwai
  * @since 1.0.0
  */
 public class PgVectorStore extends AbstractObservationVectorStore implements InitializingBean {
@@ -165,6 +177,8 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 	public static final PgIdType DEFAULT_ID_TYPE = PgIdType.UUID;
 
 	public static final String DEFAULT_VECTOR_INDEX_NAME = "spring_ai_vector_index";
+
+	public static final String DEFAULT_METADATA_INDEX_NAME = "spring_ai_metadata_gin_index";
 
 	public static final String DEFAULT_SCHEMA_NAME = "public";
 
@@ -184,6 +198,8 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 	private final String vectorTableName;
 
 	private final String vectorIndexName;
+
+	private final String metadataIndexName;
 
 	private final JdbcTemplate jdbcTemplate;
 
@@ -229,6 +245,9 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 
 		this.vectorIndexName = this.vectorTableName.equals(DEFAULT_TABLE_NAME) ? DEFAULT_VECTOR_INDEX_NAME
 				: this.vectorTableName + "_index";
+
+		this.metadataIndexName = this.vectorTableName.equals(DEFAULT_TABLE_NAME) ? DEFAULT_METADATA_INDEX_NAME
+				: this.vectorTableName + "_metadata_gin_index";
 
 		this.schemaName = builder.schemaName;
 		this.idType = builder.idType;
@@ -356,11 +375,21 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 		String nativeFilterExpression = (request.getFilterExpression() != null)
 				? this.filterExpressionConverter.convertExpression(request.getFilterExpression()) : "";
 
-		String jsonPathFilter = "";
+		StringBuilder filterBuilder = new StringBuilder();
 
 		if (StringUtils.hasText(nativeFilterExpression)) {
-			jsonPathFilter = " AND metadata::jsonb @@ '" + nativeFilterExpression + "'::jsonpath ";
+			filterBuilder.append(" AND metadata::jsonb @@ '").append(nativeFilterExpression).append("'::jsonpath ");
 		}
+
+		if (!request.getDomains().isEmpty()) {
+			String domainConditions = request.getDomains().stream()
+					.map(d -> String.format("metadata @> '{\"domain\": \"%s\"}'", d))
+					.collect(Collectors.joining(" OR "));
+
+			filterBuilder.append(" AND (").append(domainConditions).append(") ");
+		}
+
+		String combinedFilters = filterBuilder.toString();
 
 		double distance = 1 - request.getSimilarityThreshold();
 
@@ -368,7 +397,7 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 
 		return this.jdbcTemplate.query(
 				String.format(this.getDistanceType().similaritySearchSqlTemplate, getFullyQualifiedTableName(),
-						jsonPathFilter),
+						combinedFilters),
 				this.documentRowMapper, queryEmbedding, queryEmbedding, distance, request.getTopK());
 	}
 
@@ -433,7 +462,7 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 				CREATE TABLE IF NOT EXISTS %s (
 					id %s PRIMARY KEY,
 					content text,
-					metadata json,
+					metadata jsonb,
 					embedding vector(%d)
 				)
 				""", this.getFullyQualifiedTableName(), this.getColumnTypeName(), this.embeddingDimensions()));
@@ -444,6 +473,11 @@ public class PgVectorStore extends AbstractObservationVectorStore implements Ini
 					""", this.getVectorIndexName(), this.getFullyQualifiedTableName(), this.createIndexMethod,
 					this.getDistanceType().index));
 		}
+
+		// High-performance index to support the '@>' containment operator used in withDomains()
+		this.jdbcTemplate.execute(String.format("""
+				CREATE INDEX IF NOT EXISTS %s_metadata_gin ON %s USING GIN (metadata jsonb_path_ops)
+				""", this.metadataIndexName, this.getFullyQualifiedTableName()));
 	}
 
 	private String getFullyQualifiedTableName() {

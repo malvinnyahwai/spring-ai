@@ -87,9 +87,9 @@ public class PgVectorStoreObservationIT {
 				"app.datasource.type=com.zaxxer.hikari.HikariDataSource");
 
 	List<Document> documents = List.of(
-			new Document(getText("classpath:/test/data/spring.ai.txt"), Map.of("meta1", "meta1")),
+			new Document(getText("classpath:/test/data/spring.ai.txt"), Map.of("meta1", "meta1", "domain", "documentation")),
 			new Document(getText("classpath:/test/data/time.shelter.txt")),
-			new Document(getText("classpath:/test/data/great.depression.txt"), Map.of("meta2", "meta2")));
+			new Document(getText("classpath:/test/data/great.depression.txt"), Map.of("meta2", "meta2", "domain", "history")));
 
 	public static String getText(String uri) {
 		var resource = new DefaultResourceLoader().getResource(uri);
@@ -136,6 +136,30 @@ public class PgVectorStoreObservationIT {
 
 				.hasBeenStarted()
 				.hasBeenStopped();
+
+			observationRegistry.clear();
+
+			List<Document> domainResults = vectorStore
+				.similaritySearch(SearchRequest.builder().query("Spring AI").withDomains("documentation").topK(1).build());
+
+			assertThat(domainResults).as("The domain-partitioned search should return results").isNotEmpty();
+			assertThat(domainResults.get(0).getMetadata().get("domain")).isEqualTo("documentation");
+
+			TestObservationRegistryAssert.assertThat(observationRegistry)
+					.doesNotHaveAnyRemainingCurrentObservation()
+					.hasObservationWithNameEqualTo(DefaultVectorStoreObservationConvention.DEFAULT_NAME)
+					.that()
+					.hasContextualNameEqualTo("%s query".formatted(VectorStoreProvider.PG_VECTOR.value()))
+					.hasLowCardinalityKeyValue(LowCardinalityKeyNames.DB_OPERATION_NAME.asString(), "query")
+					.hasLowCardinalityKeyValue(LowCardinalityKeyNames.DB_SYSTEM.asString(),
+							VectorStoreProvider.PG_VECTOR.value())
+					.hasLowCardinalityKeyValue(LowCardinalityKeyNames.SPRING_AI_KIND.asString(),
+							SpringAiKind.VECTOR_STORE.value())
+
+					.hasHighCardinalityKeyValue(HighCardinalityKeyNames.DB_VECTOR_QUERY_CONTENT.asString(), "Spring AI")
+					.hasHighCardinalityKeyValue(HighCardinalityKeyNames.DB_VECTOR_QUERY_TOP_K.asString(), "1")
+					.hasBeenStarted()
+					.hasBeenStopped();
 
 			observationRegistry.clear();
 

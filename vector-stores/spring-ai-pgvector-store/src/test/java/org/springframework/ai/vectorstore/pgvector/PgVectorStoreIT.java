@@ -75,6 +75,7 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
  * @author Jihoon Kim
  * @author YeongMin Song
  * @author Eddú Meléndez
+ * @author Malvin Nyahwai
  */
 @Testcontainers
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
@@ -387,6 +388,42 @@ public class PgVectorStoreIT extends BaseVectorStoreTests {
 					.withMessageContaining("Line: 1:17, Error: no viable alternative at input 'NL'");
 
 				// Remove all documents from the store
+				dropTable(context);
+			});
+	}
+
+	@ParameterizedTest(name = "{0} : {displayName} ")
+	@ValueSource(strings = { "COSINE_DISTANCE", "EUCLIDEAN_DISTANCE", "NEGATIVE_INNER_PRODUCT" })
+	public void searchWithDomains(String distanceType) {
+
+		this.contextRunner.withPropertyValues("test.spring.ai.vectorstore.pgvector.distanceType=" + distanceType)
+			.run(context -> {
+				PgVectorStore vectorStore = (PgVectorStore) context.getBean(VectorStore.class);
+
+				var electronicsDocument = new Document("The battery life is amazing", Map.of("domain", "electronics"));
+				var clothingDocument = new Document("This silk fabric is soft", Map.of("domain", "clothing"));
+				var homeDocument = new Document("The couch is very comfortable", Map.of("domain", "home_decor"));
+
+				vectorStore.add(List.of(electronicsDocument, clothingDocument, homeDocument));
+
+				SearchRequest baseRequest = SearchRequest.builder()
+						.query("comfortable soft amazing")
+						.topK(5)
+						.build();
+
+				List<Document> singleResults = vectorStore.similaritySearch(
+						SearchRequest.from(baseRequest).withDomains("electronics").build());
+				assertThat(singleResults).hasSize(1);
+				assertThat(singleResults.get(0).getMetadata().get("domain")).isEqualTo("electronics");
+
+				List<Document> multiResults = vectorStore.similaritySearch(
+						SearchRequest.from(baseRequest).withDomains("electronics", "clothing").build());
+				assertThat(multiResults).hasSize(2);
+
+				List<Document> emptyResults = vectorStore.similaritySearch(
+						SearchRequest.from(baseRequest).withDomains("automotive").build());
+				assertThat(emptyResults).isEmpty();
+
 				dropTable(context);
 			});
 	}
